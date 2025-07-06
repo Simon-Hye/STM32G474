@@ -1145,7 +1145,7 @@ HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef *huart, const uint8_t *pD
     }
     else
     {
-      pdata8bits  = pData;
+      pdata8bits  = pData;pdata8bits  = pData;
       pdata16bits = NULL;
     }
 

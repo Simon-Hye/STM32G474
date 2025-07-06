@@ -19,6 +19,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
+#include <string.h>
+#include <sys/types.h>
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -32,6 +35,11 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+// LED Control
+# define OFF 0
+# define LOW 330
+# define MEDIUM 660
+# define HIGH 990
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -40,6 +48,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
 
@@ -48,7 +57,14 @@ DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
+uint16_t key_status[2]={0,0};
+uint16_t key_pressed[2]={0,0};
 
+uint8_t rx_buf[RX_BUF_LEN]={0};
+uint8_t tx_buf[TX_BUF_LEN]={0};
+volatile uint8_t idle_flag = 0;
+volatile uint8_t rx_buf_len=0;
+uint8_t tx_buf_len=0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -58,9 +74,11 @@ static void MX_DMA_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM7_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
-uint16_t key_status[2]={0,0};
-uint16_t key_pressed[2]={0,0};
+void LED_on_off(void);  // use the keys to turn on/off the leds
+void LED_control(void);
+void LED_set(uint8_t led_id,uint8_t level);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -101,26 +119,31 @@ int main(void)
   MX_TIM6_Init();
   MX_TIM7_Init();
   MX_USART2_UART_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   __HAL_TIM_CLEAR_FLAG(&htim6, TIM_FLAG_UPDATE);
   __HAL_TIM_CLEAR_FLAG(&htim7, TIM_FLAG_UPDATE);
   HAL_TIM_Base_Start_IT(&htim6);
   HAL_TIM_Base_Start_IT(&htim7);
+
+  HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_2);
+
+  __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
+  HAL_UART_Receive_DMA(&huart2,rx_buf,RX_BUF_LEN);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    if (key_pressed[0]==1)
-    {
-      HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-      key_pressed[0]=0;
-    }
-    if (key_pressed[1]==1)
-    {
-      HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
-      key_pressed[1]=0;
+    if (idle_flag==1) {
+      LED_control();
+      HAL_UART_Transmit_DMA(&huart2,tx_buf,tx_buf_len);
+      memset(rx_buf,0,rx_buf_len);
+      rx_buf_len=0;
+      tx_buf_len=0;
+      idle_flag=0;
     }
     /* USER CODE END WHILE */
 
@@ -173,6 +196,92 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 169;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 999;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.BreakFilter = 0;
+  sBreakDeadTimeConfig.BreakAFMode = TIM_BREAK_AFMODE_INPUT;
+  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
+  sBreakDeadTimeConfig.Break2Filter = 0;
+  sBreakDeadTimeConfig.Break2AFMode = TIM_BREAK_AFMODE_INPUT;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+  HAL_TIM_MspPostInit(&htim1);
+
 }
 
 /**
@@ -357,6 +466,18 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void LED_on_off(void) {
+  if (key_pressed[0]==1)
+  {
+    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+    key_pressed[0]=0;
+  }
+  if (key_pressed[1]==1)
+  {
+    HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+    key_pressed[1]=0;
+  }
+}
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
   if (htim->Instance == htim6.Instance) // check the status of LEDS
   {
@@ -400,7 +521,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     }
   }
   // transmit the status of LEDs
-  else if (htim->Instance == htim7.Instance)
+  else if (htim->Instance == 0)
   {
     static const uint8_t msg1_on[]  = "LED1 is on\n";
     static const uint8_t msg1_off[] = "LED1 is off\n";
@@ -428,6 +549,134 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     }
   }
 
+}
+void LED_set(uint8_t led_id, uint8_t level) {
+  if (led_id==1) {
+    if (level==OFF) {
+      __HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_1,OFF);
+    }
+    else if (level==1) {
+      __HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_1,LOW);
+    }
+    else if (level==2) {
+      __HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_1,MEDIUM);
+    }
+    else if (level==3) {
+      __HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_1,HIGH);
+    }
+  }
+  else if (led_id==2) {
+    if (level==OFF) {
+      __HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_2,OFF);
+    }
+    else if (level==1) {
+      __HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_2,LOW);
+    }
+    else if (level==2) {
+      __HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_2,MEDIUM);
+    }
+    else if (level==3) {
+      __HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_2,HIGH);
+    }
+  }
+}
+void LED_control(void) {
+  tx_buf[0]=0x66;
+  tx_buf[1]=0xAA;
+  if (rx_buf_len<5) {
+    tx_buf[2] = 0xE2;
+    tx_buf[3] = 1;
+    tx_buf[4] = 0x01;
+    tx_buf[5]=0xFF;
+    tx_buf_len=6;
+    return;
+  }
+  if (rx_buf[0] != 0x55 || rx_buf[1] != 0xAA || rx_buf[rx_buf_len-1] != 0xFF) {
+    tx_buf[2] = 0xE2;
+    tx_buf[3] = 1;
+    tx_buf[4] = 0x01;
+    tx_buf[5]=0xFF;
+    tx_buf_len=6;
+    return;
+  }
+
+  uint8_t control=rx_buf[2];
+  uint8_t n=rx_buf[3];
+  if (control==0x0A && n == 0) {
+    LED_set(1,OFF);
+    LED_set(2,OFF);
+
+    tx_buf[2] = 0xCA;    // 关闭所有灯成功
+    tx_buf[3] = 0;
+    tx_buf[4]=0xFF;
+    tx_buf_len=5;
+    return;
+  }
+  else if (control==0x01) {
+    if (n != 1 && n != 2) {
+      tx_buf[2] = 0xE2;
+      tx_buf[3] = 1;
+      tx_buf[4] = 0x02;
+      tx_buf[5] = 0xFF;
+      tx_buf_len=6;
+      return;
+    }
+
+    uint8_t id_err    = 0;
+    uint8_t level_err = 0;
+    uint8_t ids[2], levels[2], data[2];
+
+    for (uint8_t i = 0; i < n; ++i) {
+      data[i]   = rx_buf[4 + i];
+      ids[i]    = (data[i] >> 4) & 0x0F;
+      levels[i] = data[i] & 0x0F;
+
+      if (ids[i] != 1 && ids[i] != 2)    id_err = 1;
+      if (levels[i] > 3)                 level_err = 1;
+    }
+
+    if (!id_err && !level_err) {
+      for (uint8_t i = 0; i < n; ++i) {
+        LED_set(ids[i], levels[i]);
+      }
+      tx_buf[2] = 0xC1;
+      tx_buf[3] = n;
+      for (uint8_t i = 0; i < n; ++i) {
+        tx_buf[4 + i] = data[i];
+      }
+      tx_buf[4 + n] = 0xFF;
+      tx_buf_len=5+n;
+    }
+    else if (id_err && !level_err) {
+      tx_buf[2] = 0xE1;
+      tx_buf[3] = 1;
+      tx_buf[4] = 0x01;
+      tx_buf[5] = 0xFF;
+      tx_buf_len=6;
+    }
+    else if (!id_err && level_err) {
+      tx_buf[2] = 0xE1;
+      tx_buf[3] = 1;
+      tx_buf[4] = 0x02;
+      tx_buf[5] = 0xFF;
+      tx_buf_len=6;
+    }
+    else if (id_err && level_err) {
+      tx_buf[2] = 0xE1;
+      tx_buf[3] = 2;
+      tx_buf[4] = 0x01;
+      tx_buf[5] = 0x02;
+      tx_buf[6] = 0xFF;
+      tx_buf_len=7;
+      }
+    }
+  else {
+    tx_buf[2] = 0xE0;
+    tx_buf[3] = 1;
+    tx_buf[4] = control;
+    tx_buf[5]=0xFF;
+    tx_buf_len=6;
+  }
 }
 /* USER CODE END 4 */
 

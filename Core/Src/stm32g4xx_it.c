@@ -20,6 +20,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32g4xx_it.h"
+
+#include <string.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -51,7 +53,7 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+void UART_IDLECallback(UART_HandleTypeDef *huart);
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
@@ -61,7 +63,9 @@ extern DMA_HandleTypeDef hdma_usart2_rx;
 extern DMA_HandleTypeDef hdma_usart2_tx;
 extern UART_HandleTypeDef huart2;
 /* USER CODE BEGIN EV */
-
+extern uint8_t rx_buf[RX_BUF_LEN];
+extern volatile uint8_t idle_flag;
+extern volatile uint8_t rx_buf_len;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -236,7 +240,12 @@ void DMA1_Channel2_IRQHandler(void)
 void USART2_IRQHandler(void)
 {
   /* USER CODE BEGIN USART2_IRQn 0 */
-
+  if(RESET != __HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE))   //判断是否是空闲中断
+  {
+    idle_flag = 1;
+    __HAL_UART_CLEAR_IDLEFLAG(&huart2);                     //清楚空闲中断标志（否则会一直不断进入中断）
+    UART_IDLECallback(&huart2);                          //调用中断处理函数
+  }
   /* USER CODE END USART2_IRQn 0 */
   HAL_UART_IRQHandler(&huart2);
   /* USER CODE BEGIN USART2_IRQn 1 */
@@ -273,5 +282,12 @@ void TIM7_DAC_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
-
+void UART_IDLECallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance ==USART2) {
+    HAL_UART_DMAStop(huart);
+    rx_buf_len = RX_BUF_LEN - __HAL_DMA_GET_COUNTER(huart->hdmarx);
+    idle_flag=1;
+    HAL_UART_Receive_DMA(huart, (uint8_t*)rx_buf, RX_BUF_LEN);
+  }
+}
 /* USER CODE END 1 */
